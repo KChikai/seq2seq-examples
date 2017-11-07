@@ -120,9 +120,7 @@ def main():
     matrix_row_size = train_input_mats[0].shape[1] - testsize
     accum_loss = 0
     train_loss_data = []
-    test_loss_data = []
-    bleu_score_data = []
-    wer_score_data = []
+
     for num, epoch in enumerate(range(n_epoch)):
         total_loss = test_loss = batch_num = 0
 
@@ -168,64 +166,6 @@ def main():
                 batch_num += 1
                 accum_loss = 0
 
-        # for testing by 1epoch
-        list_of_hypotheses = []
-        for i in range(0, testsize, batchsize):
-
-            # select test batch data
-            input_batch = test_input_mat[:, i:i + batchsize]
-            output_batch = test_output_mat[:, i:i + batchsize]
-
-            # Encode a sentence
-            model.initialize()                     # initialize cell
-            model.encode(input_batch, train=True)  # encode (output: hidden Variable)
-
-            # Decode from encoded context
-            end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
-            first_words = output_batch[0]
-            loss, predict_mat = model.decode(end_batch, first_words, train=True)
-            next_ids = xp.argmax(predict_mat.data, axis=1)
-            test_loss += loss
-            if args.gpu >= 0:
-                hypotheses = [cuda.to_cpu(next_ids)]
-            else:
-                hypotheses = [next_ids]
-            for w_ids in output_batch[1:]:
-                loss, predict_mat = model.decode(next_ids, w_ids, train=True)
-                next_ids = xp.argmax(predict_mat.data, axis=1)
-                test_loss += loss
-                if args.gpu >= 0:
-                    hypotheses.append(cuda.to_cpu(next_ids))
-                else:
-                    hypotheses.append(next_ids)
-
-            # collect hypotheses for calculating BLEU score
-            hypotheses = np.array(hypotheses).T
-            for hypothesis in hypotheses:
-                text_list = hypothesis.tolist()
-                list_of_hypotheses.append([w_id for w_id in text_list if w_id is not -1])
-
-        # calculate BLEU score from test (develop) data
-        bleu_score = nltk.translate.bleu_score.corpus_bleu(list_of_references, list_of_hypotheses,
-                                                           weights=(0.25, 0.25, 0.25, 0.25))
-        bleu_score_data.append(bleu_score)
-        print('Epoch: ', num, 'BLEU SCORE: ', bleu_score)
-
-        # calculate WER score from test (develop) data
-        wer_score = 0
-        for index, references in enumerate(list_of_references):
-            wer_score += wer(references[0], list_of_hypotheses[index])
-        wer_score /= len(list_of_references)
-        wer_score_data.append(wer_score)
-        print('Epoch: ', num, 'WER SCORE: ', wer_score)
-
-        # evaluate a test loss
-        check_loss = test_loss_data[-10:]           # check out the last 10 loss data
-        end_flg = [j for j in range(len(check_loss) - 1) if check_loss[j] < check_loss[j + 1]]
-        if len(end_flg) > 9:
-            print('Probably it is over-fitting. So stop to learn...')
-            break
-
         # save model and optimizer
         if (epoch + 1) % 5 == 0:
             print('-----', epoch + 1, ' times -----')
@@ -235,20 +175,12 @@ def main():
 
         # display the on-going status
         print('Epoch: ', num,
-              'Train loss: {:.2f}'.format(total_loss),
-              'Test loss: {:.2f}'.format(float(test_loss.data)))
+              'Train loss: {:.2f}'.format(total_loss))
         train_loss_data.append(float(total_loss / batch_num))
-        test_loss_data.append(float(test_loss.data))
 
     # save loss data
     with open('./data/rough_loss_train_data.pkl', 'wb') as f:
         pickle.dump(train_loss_data, f)
-    with open('./data/rough_loss_test_data.pkl', 'wb') as f:
-        pickle.dump(test_loss_data, f)
-    with open('./data/rough_bleu_score_data.pkl', 'wb') as f:
-        pickle.dump(bleu_score_data, f)
-    with open('./data/rough_wer_score_data.pkl', 'wb') as f:
-        pickle.dump(wer_score_data, f)
 
 
 if __name__ == "__main__":
