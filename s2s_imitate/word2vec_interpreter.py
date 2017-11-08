@@ -27,8 +27,8 @@ W2V_MODEL_PATH = './data/neo_model.vec'
 # parse command line args
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g', default='-1', type=int, help='GPU ID (negative value indicates CPU)')
-parser.add_argument('--feature_num', '-f', default=300, type=int, help='dimension of feature layer')
-parser.add_argument('--hidden_num', '-hi', default=300, type=int, help='dimension of hidden layer')
+parser.add_argument('--feature_num', '-f', default=1024, type=int, help='dimension of feature layer')
+parser.add_argument('--hidden_num', '-hi', default=2048, type=int, help='dimension of hidden layer')
 parser.add_argument('--bar', '-b', default='0', type=int, help='whether to show the graph of loss values or not')
 parser.add_argument('--lang', '-l', default='ja', type=str, help='the choice of a language (Japanese "ja" or English "en" )')
 args = parser.parse_args()

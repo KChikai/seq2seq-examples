@@ -5,7 +5,7 @@ This is a train script for seq2seq.py
 You can also use Batch and GPU.
 args: --gpu (flg of GPU, if you want to use GPU, please write "--gpu 1")
 
-単語次元：1048，隠れ層：2048
+単語次元：1024，隠れ層：2048
 単語語彙数：25000
 目的関数：Adam, 関数の初期化をエポック毎に行う
 
@@ -17,13 +17,11 @@ os.environ["CHAINER_TYPE_CHECK"] = "0"
 import glob
 import pickle
 import argparse
-import nltk
 import numpy as np
 import chainer
 from chainer import cuda, optimizers, serializers
 from tuning_util import JaConvCorpus
 from seq2seq import Seq2Seq
-from wer import wer
 
 
 # parse command line args
