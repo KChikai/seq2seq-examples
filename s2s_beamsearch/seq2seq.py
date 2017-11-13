@@ -200,44 +200,63 @@ class Seq2Seq(chainer.Chain):
         :param max_length: Length limit for generated sequence. Default 50.
         """
 
+        # 入力データのタイプチェック
         if isinstance(X, list) or X.ndim == 1:
             X = np.array([X], dtype=np.int32).T
         assert X.ndim == 2 and X.shape[1] == 1, "X should be a column array with shape (input-sequence-length, 1)"
 
+        # encode
         next_fringe = [Node(parent=None, state=initial_state_function(X), value=start_id, cost=0.0)]
         hypotheses = []
 
         for _ in range(max_length):
 
+            # 予測候補単語リストの入替え(next_fringe => fringe にお引越し)
             fringe = []
             for n in next_fringe:
-                # print(n.value)
                 if n.value == end_id:
                     hypotheses.append(n)
                 else:
                     fringe.append(n)
-
+            # 終了条件
             if not fringe or len(hypotheses) >= num_hypotheses:
                 break
 
             Y_tm1 = [n.value for n in fringe]
             state_tm1 = [n.state for n in fringe]
-            state_t, p_t = generate_function(Y_tm1, state_tm1)
-            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]  # no point in taking more than fits in the beam (大きい値上位beam幅件の配列番号を取得)
-
+            state_t, p_t = generate_function(Y_tm1, state_tm1)  # state_t: decの内部状態群, p_t: 各行にpredict_vec(単語次元)が入った行列
+            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]      # Y_t: 大きい値上位beam幅件の配列番号リスト
+            print()
+            print('fringe: ', [n.value for n in fringe])
+            print('predict_vec: ', p_t)
+            print('Y_t: ', Y_t)
             next_fringe = []
             for Y_t_n, p_t_n, state_t_n, n in zip(Y_t, p_t, state_t, fringe):
-                print()
-                print(Y_t)
+                print('')
+                print('Y_t_n: ', Y_t_n)
                 print('p_t_n[Y_t_n]: ', p_t_n[Y_t_n])
-                Y_nll_t_n = -np.log(p_t_n[Y_t_n])
+                print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n[Y_t_n]])).data)
+                print('Y_nll_t_n (-np.log): ', -np.log(p_t_n[Y_t_n]))
+
+                # cost計算式
+                Y_nll_t_n = -F.log_softmax(np.array([p_t_n[Y_t_n]])).data[0, :]              # Y_nll_t_n: Y_t_n（次遷移候補単語上位beam幅件の配列番号リスト) からスコアをつけたもの
+                # Y_nll_t_n = -np.log(p_t_n[Y_t_n])
 
                 for y_t_n, y_nll_t_n in zip(Y_t_n, Y_nll_t_n):
                     print('y_t_n: ', y_t_n, 'y_nll_t_n: ', y_nll_t_n)
                     n_new = Node(parent=n, state=state_t_n, value=y_t_n, cost=y_nll_t_n)
                     next_fringe.append(n_new)
 
-            next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]  # may move this into loop to save memory
+            # 全コストを計算する場合
+            next_fringe = sorted([(n.to_cost_score(), n) for n in next_fringe], key=lambda x:x[0])[:beam_width]
+            print('all cost: ', [(c, n.value) for c, n in next_fringe])
+            next_fringe = [n for c, n in next_fringe]
+
+            # 現在の単語のコストのみを考慮する場合
+            # next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]  # may move this into loop to save memory
+            # print('current cost: ', [n.value for n in next_fringe])
+
+            print('------------')
 
         hypotheses.sort(key=lambda n: n.cum_cost)
         return hypotheses[:num_hypotheses]
@@ -255,6 +274,14 @@ class Node(object):
         self.cum_cost = parent.cum_cost + cost if parent else cost  # e.g. -log(p) of sequence up to current node (including)
         self.length = 1 if parent is None else parent.length + 1
         self._sequence = None
+
+    def to_cost_score(self):
+        cost = 0
+        current_node = self
+        while current_node:
+            cost += current_node.cum_cost
+            current_node = current_node.parent
+        return cost
 
     def to_sequence(self):
         # Return sequence of nodes from root to current node.
