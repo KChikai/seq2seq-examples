@@ -222,15 +222,15 @@ class Seq2Seq(chainer.Chain):
 
             Y_tm1 = [n.value for n in fringe]
             state_tm1 = [n.state for n in fringe]
-            state_t, p_t = generate_function(Y_tm1, state_tm1)
-            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]  # no point in taking more than fits in the beam (大きい値上位beam幅件の配列番号を取得)
+            state_t, p_t = generate_function(Y_tm1, state_tm1)  # state_t: decの内部状態群, p_t: 各行にpredict_vec(単語次元)が入った行列
+            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]      # no point in taking more than fits in the beam (大きい値上位beam幅件の配列番号を取得)
 
             next_fringe = []
             for Y_t_n, p_t_n, state_t_n, n in zip(Y_t, p_t, state_t, fringe):
                 print()
                 print(Y_t)
                 print('p_t_n[Y_t_n]: ', p_t_n[Y_t_n])
-                Y_nll_t_n = -np.log(p_t_n[Y_t_n])
+                Y_nll_t_n = -np.log(p_t_n[Y_t_n])               # Y_nll_t_n: Y_t_n（次遷移候補単語上位beam幅件の配列番号リスト) からスコアをつけたもの
 
                 for y_t_n, y_nll_t_n in zip(Y_t_n, Y_nll_t_n):
                     print('y_t_n: ', y_t_n, 'y_nll_t_n: ', y_nll_t_n)
