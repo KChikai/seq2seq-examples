@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from nltk import word_tokenize
 from chainer import serializers, cuda
-from s2s_beamsearch.util import ConvCorpus
+from s2s_beamsearch.util import ConvCorpus, JaConvCorpus
 from s2s_beamsearch.seq2seq import Seq2Seq
 
 # path info
@@ -70,6 +70,9 @@ def interpreter(data_path, model_path):
     if args.lang == 'en':
         corpus = ConvCorpus(file_path=None)
         corpus.load(load_dir=data_path)
+    elif args.lang == 'ja':
+        corpus = JaConvCorpus(file_path=None)
+        corpus.load(load_dir=data_path)
     else:
         print('You gave wrong argument to this system. Check out your argument about languages.')
         raise ValueError
@@ -108,8 +111,7 @@ def interpreter(data_path, model_path):
         hypotheses = model.beam_search(model.initial_state_function, model.generate_function,
                                        input_sentence, start_id=corpus.dic.token2id['<start>'],
                                        end_id=corpus.dic.token2id['<eos>'],
-                                       word2id=corpus.dic.token2id, id2word=corpus.dic,
-                                       max_length=len(input_sentence) + 30)
+                                       word2id=corpus.dic.token2id, id2word=corpus.dic)
         for hypothesis in hypotheses:
             generated_indices = hypothesis.to_sequence_of_values()
             generated_tokens = [corpus.dic[i] for i in generated_indices]

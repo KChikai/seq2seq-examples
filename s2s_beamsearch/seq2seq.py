@@ -181,7 +181,7 @@ class Seq2Seq(chainer.Chain):
 
     @staticmethod
     def beam_search(initial_state_function, generate_function, X, start_id, end_id, word2id, id2word,
-                    beam_width=4, num_hypotheses=5, max_length=50):
+                    beam_width=4, num_hypotheses=5, max_length=15):
         """
         Beam search for neural network sequence to sequence (encoder-decoder) models.
 
@@ -218,29 +218,42 @@ class Seq2Seq(chainer.Chain):
                     hypotheses.append(n)
                 else:
                     fringe.append(n)
+
             # 終了条件
-            if not fringe or len(hypotheses) >= num_hypotheses:
+            if not fringe:
                 break
+
+            # hypothesis同士の比較 (hypothesis数が上限値を超えている場合 => costが高いものから消去)
+            if len(hypotheses) > num_hypotheses:
+                sort_hypotheses = sorted([(hypothesis.to_cost_score(), hypothesis) for hypothesis in hypotheses],
+                                         key=lambda x: x[0])[:num_hypotheses]
+                hypotheses.clear()
+                for tup_hypothesis in sort_hypotheses:
+                    hypotheses.append(tup_hypothesis[1])
 
             Y_tm1 = [n.value for n in fringe]
             state_tm1 = [n.state for n in fringe]
             state_t, p_t = generate_function(Y_tm1, state_tm1)  # state_t: decの内部状態群, p_t: 各行にpredict_vec(単語次元)が入った行列
             Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]      # Y_t: 大きい値上位beam幅件の配列番号リスト
-            print()
-            print('fringe: ', [n.value for n in fringe])
-            print('predict_vec: ', p_t)
-            print('Y_t: ', Y_t)
+            # print()
+            # print('index:', _)
+            # print('hypotheses: ', hypotheses)
+            # print('fringe: ', [n.value for n in fringe])
+            # print('predict_vec: ', p_t)
+            # print('Y_t: ', Y_t)
             next_fringe = []
             for Y_t_n, p_t_n, state_t_n, n in zip(Y_t, p_t, state_t, fringe):
-                print('')
-                print('Y_t_n: ', Y_t_n)
-                print('p_t_n[Y_t_n]: ', p_t_n[Y_t_n])
-                print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n[Y_t_n]])).data)
-                print('Y_nll_t_n (-np.log): ', -np.log(p_t_n[Y_t_n]))
+                # print('')
+                # print('Y_t_n: ', Y_t_n)
+                # print('p_t_n[Y_t_n]: ', p_t_n[Y_t_n])
+                # print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n[Y_t_n]])).data)
+                # print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n])).data[:, Y_t_n])
+                # print('Y_nll_t_n (-np.log): ', -np.log(p_t_n[Y_t_n]))
 
-                # cost計算式
-                Y_nll_t_n = -F.log_softmax(np.array([p_t_n[Y_t_n]])).data[0, :]              # Y_nll_t_n: Y_t_n（次遷移候補単語上位beam幅件の配列番号リスト) からスコアをつけたもの
+                # cost計算式 Y_nll_t_n: Y_t_n（次遷移候補単語上位beam幅件の配列番号リスト) からスコアをつけたもの
                 # Y_nll_t_n = -np.log(p_t_n[Y_t_n])
+                # Y_nll_t_n = -F.log_softmax(np.array([p_t_n[Y_t_n]])).data[0, :]
+                Y_nll_t_n = -F.log_softmax(np.array([p_t_n])).data[:, Y_t_n][0, :]
 
                 for y_t_n, y_nll_t_n in zip(Y_t_n, Y_nll_t_n):
                     print('y_t_n: ', y_t_n, 'y_nll_t_n: ', y_nll_t_n)
@@ -248,17 +261,21 @@ class Seq2Seq(chainer.Chain):
                     next_fringe.append(n_new)
 
             # 全コストを計算する場合
-            next_fringe = sorted([(n.to_cost_score(), n) for n in next_fringe], key=lambda x:x[0])[:beam_width]
-            print('all cost: ', [(c, n.value) for c, n in next_fringe])
-            next_fringe = [n for c, n in next_fringe]
+            # next_fringe = sorted([(n.to_cost_score(), n) for n in next_fringe], key=lambda x: x[0])[:beam_width]
+            # print('all cost: ', [(c, n.value) for c, n in next_fringe])
+            # next_fringe = [n for c, n in next_fringe]
+            next_fringe = sorted(next_fringe, key=lambda n: n.to_cost_score())[:beam_width]
+            print('current cost: ', [n.value for n in next_fringe])
 
             # 現在の単語のコストのみを考慮する場合
-            # next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]  # may move this into loop to save memory
+            # next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]
             # print('current cost: ', [n.value for n in next_fringe])
 
             print('------------')
 
+        # 最終的なsorting
         hypotheses.sort(key=lambda n: n.cum_cost)
+        # hypotheses.sort(key=lambda n: n.to_cost_score())   # sentence全体のcostを計算したい場合
         return hypotheses[:num_hypotheses]
 
 
