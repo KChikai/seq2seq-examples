@@ -11,6 +11,7 @@ In Advances in Neural Information Processing Systems (NIPS 2014).
 import os
 os.environ["CHAINER_TYPE_CHECK"] = "0"
 
+import math
 import numpy as np
 import chainer
 import chainer.functions as F
@@ -33,7 +34,7 @@ class Encoder(chainer.Chain):
 
     def __call__(self, x, c_pre, h_pre, train=True):
         e = F.tanh(self.xe(x))
-        c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(e), ratio=0.1, train=train) + self.hh(h_pre))
+        c_tmp, h_tmp = F.lstm(c_pre, self.eh(e) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(x.data != -1).data.reshape(len(x), 1))    # calculate flg whether x is -1 or not
         c_next = F.where(enable, c_tmp, c_pre)                                   # if x!=-1, c_tmp . elseif x=-1, c_pre.
         h_next = F.where(enable, h_tmp, h_pre)                                   # if x!=-1, h_tmp . elseif x=-1, h_pre.
@@ -46,18 +47,35 @@ class Decoder(chainer.Chain):
             ye=L.EmbedID(vocab_size, embed_size, ignore_label=-1),
             eh=L.Linear(embed_size, 4 * hidden_size),
             hh=L.Linear(hidden_size, 4 * hidden_size),
-            hf=L.Linear(hidden_size, embed_size),
-            fy=L.Linear(embed_size, vocab_size),
+            wc=L.Linear(hidden_size, hidden_size),
+            wh=L.Linear(hidden_size, hidden_size),
+            fy=L.Linear(hidden_size, vocab_size),
         )
 
-    def __call__(self, y, c_pre, h_pre, train=True):
+    def __call__(self, y, c_pre, h_pre, hs_enc):
         e = F.tanh(self.ye(y))
-        c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(e), ratio=0.1, train=train) + self.hh(h_pre))
+        c_tmp, h_tmp = F.lstm(c_pre, self.eh(e) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(y.data != -1).data.reshape(len(y), 1))
         c_next = F.where(enable, c_tmp, c_pre)
         h_next = F.where(enable, h_tmp, h_pre)
-        f = F.tanh(self.hf(h_next))
+        ct = self.calculate_alpha(h_next, hs_enc)
+        f = F.tanh(self.wc(ct) + self.wh(h_next))
         return self.fy(f), c_next, h_next
+
+    @staticmethod
+    def calculate_alpha(h, hs_enc):
+        sum_value = Variable(xp.zeros((h.shape[0], 1), dtype=xp.float32))
+        products = []
+        for h_enc in hs_enc:
+            inner_product = F.exp(F.batch_matmul(h, h_enc, transa=True) * (1 / 10e+03) ).data[:, :, 0]
+            products.append(inner_product)
+            sum_value += inner_product
+        #print(sum_value.data)
+        ct = Variable(xp.zeros((h.shape[0], h.shape[1]), dtype=xp.float32))
+        for i, h_enc in enumerate(hs_enc):
+            alpha_i = (products[i] * (1 / 10e+03)) / sum_value
+            ct += alpha_i.data * h_enc.data
+        return ct
 
 
 class Seq2Seq(chainer.Chain):
@@ -77,6 +95,7 @@ class Seq2Seq(chainer.Chain):
         self.batch_size = batch_size
         self.c_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))  # cell Variable
         self.h_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))  # hidden Variable
+        self.h_enc = []                                                                     # for calculating alpha
 
         super(Seq2Seq, self).__init__(
             enc=Encoder(vocab_size, feature_num, hidden_num, batch_size),       # encoder
@@ -92,6 +111,7 @@ class Seq2Seq(chainer.Chain):
         for batch_word in input_batch:
             batch_word = chainer.Variable(xp.array(batch_word, dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(batch_word, self.c_batch, self.h_batch, train=train)
+            self.h_enc.append(self.h_batch)
 
     def decode(self, predict_id, teacher_id, train):
         """
@@ -101,7 +121,7 @@ class Seq2Seq(chainer.Chain):
         :return: decoded embed vector
         """
         batch_word = chainer.Variable(xp.array(predict_id, dtype=xp.int32))
-        predict_mat, self.c_batch, self.h_batch = self.dec(batch_word, self.c_batch, self.h_batch, train=train)
+        predict_mat, self.c_batch, self.h_batch = self.dec(batch_word, self.c_batch, self.h_batch, self.h_enc)
         if train:
             t = xp.array(teacher_id, dtype=xp.int32)
             t = chainer.Variable(t)
@@ -112,6 +132,7 @@ class Seq2Seq(chainer.Chain):
     def initialize(self):
         self.c_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
         self.h_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
+        self.h_enc.clear()
 
     def one_encode(self, src_text, train):
         """
@@ -131,7 +152,7 @@ class Seq2Seq(chainer.Chain):
         :return: decoded embed vector
         """
         word = chainer.Variable(xp.array([predict_id], dtype=xp.int32))
-        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, train=train)
+        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, self.h_enc)
         if train:
             t = xp.array([teacher_id], dtype=xp.int32)
             t = chainer.Variable(t)
@@ -233,49 +254,17 @@ class Seq2Seq(chainer.Chain):
 
             Y_tm1 = [n.value for n in fringe]
             state_tm1 = [n.state for n in fringe]
-            state_t, p_t = generate_function(Y_tm1, state_tm1)  # state_t: decの内部状態群, p_t: 各行にpredict_vec(単語次元)が入った行列
-            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]      # Y_t: 大きい値上位beam幅件の配列番号リスト
-            # print()
-            # print('index:', _)
-            # print('hypotheses: ', hypotheses)
-            # print('fringe: ', [n.value for n in fringe])
-            # print('predict_vec: ', p_t)
-            # print('Y_t: ', Y_t)
+            state_t, p_t = generate_function(Y_tm1, state_tm1)
+            Y_t = np.argsort(p_t, axis=1)[:, -beam_width:]
             next_fringe = []
             for Y_t_n, p_t_n, state_t_n, n in zip(Y_t, p_t, state_t, fringe):
-                # print('')
-                # print('Y_t_n: ', Y_t_n)
-                # print('p_t_n[Y_t_n]: ', p_t_n[Y_t_n])
-                # print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n[Y_t_n]])).data)
-                # print('Y_nll_t_n (-log_softmax): ', -F.log_softmax(np.array([p_t_n])).data[:, Y_t_n])
-                # print('Y_nll_t_n (-np.log): ', -np.log(p_t_n[Y_t_n]))
-
-                # cost計算式 Y_nll_t_n: Y_t_n（次遷移候補単語上位beam幅件の配列番号リスト) からスコアをつけたもの
-                # Y_nll_t_n = -np.log(p_t_n[Y_t_n])
-                # Y_nll_t_n = -F.log_softmax(np.array([p_t_n[Y_t_n]])).data[0, :]
                 Y_nll_t_n = -F.log_softmax(np.array([p_t_n])).data[:, Y_t_n][0, :]
-
                 for y_t_n, y_nll_t_n in zip(Y_t_n, Y_nll_t_n):
-                    # print('y_t_n: ', y_t_n, 'y_nll_t_n: ', y_nll_t_n)
                     n_new = Node(parent=n, state=state_t_n, value=y_t_n, cost=y_nll_t_n)
                     next_fringe.append(n_new)
-
-            # 全コストを計算する場合
-            # next_fringe = sorted([(n.to_cost_score(), n) for n in next_fringe], key=lambda x: x[0])[:beam_width]
-            # print('all cost: ', [(c, n.value) for c, n in next_fringe])
-            # next_fringe = [n for c, n in next_fringe]
             next_fringe = sorted(next_fringe, key=lambda n: n.to_cost_score())[:beam_width]
-            # print('current cost: ', [n.value for n in next_fringe])
 
-            # 現在の単語のコストのみを考慮する場合
-            # next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]
-            # print('current cost: ', [n.value for n in next_fringe])
-
-            # print('------------')
-
-        # 最終的なsorting
-        # hypotheses.sort(key=lambda n: n.cum_cost)
-        hypotheses.sort(key=lambda n: n.to_cost_score())   # sentence全体のcostを計算したい場合
+        hypotheses.sort(key=lambda n: n.to_cost_score())
         return hypotheses[:num_hypotheses]
 
 
@@ -315,3 +304,4 @@ class Node(object):
 
     def to_sequence_of_extras(self):
         return [s.extras for s in self.to_sequence()]
+
