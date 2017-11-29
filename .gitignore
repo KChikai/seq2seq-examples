@@ -5,3 +5,5 @@ data/
 
 s2s_formalEx/
 !s2s_formalEx/*.py
+
+dev/

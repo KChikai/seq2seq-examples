@@ -6,28 +6,31 @@ os.environ["CHAINER_TYPE_CHECK"] = "0"
 import argparse
 import unicodedata
 import pickle
+import gensim
 import numpy as np
 import matplotlib.pyplot as plt
 from nltk import word_tokenize
 from chainer import serializers, cuda
-from s2s_beamsearch.util import ConvCorpus, JaConvCorpus
-from s2s_beamsearch.seq2seq import Seq2Seq
+from tuning_util import JaConvCorpus
+from seq2seq import Seq2Seq
+
 
 # path info
 DATA_DIR = './data/corpus/'
-MODEL_PATH = './data/149.model'
+MODEL_PATH = './data/59.model'
 TRAIN_LOSS_PATH = './data/loss_train_data.pkl'
 TEST_LOSS_PATH = './data/loss_test_data.pkl'
 BLEU_SCORE_PATH = './data/bleu_score_data.pkl'
 WER_SCORE_PATH = './data/wer_score_data.pkl'
+W2V_MODEL_PATH = './data/neo_model.vec'
 
 # parse command line args
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g', default='-1', type=int, help='GPU ID (negative value indicates CPU)')
 parser.add_argument('--feature_num', '-f', default=1024, type=int, help='dimension of feature layer')
-parser.add_argument('--hidden_num', '-hi', default=1024, type=int, help='dimension of hidden layer')
+parser.add_argument('--hidden_num', '-hi', default=2048, type=int, help='dimension of hidden layer')
 parser.add_argument('--bar', '-b', default='0', type=int, help='whether to show the graph of loss values or not')
-parser.add_argument('--lang', '-l', default='en', type=str, help='the choice of a language (Japanese "ja" or English "en" )')
+parser.add_argument('--lang', '-l', default='ja', type=str, help='the choice of a language (Japanese "ja" or English "en" )')
 args = parser.parse_args()
 
 # GPU settings
@@ -67,10 +70,7 @@ def interpreter(data_path, model_path):
     :return:
     """
     # call dictionary class
-    if args.lang == 'en':
-        corpus = ConvCorpus(file_path=None)
-        corpus.load(load_dir=data_path)
-    elif args.lang == 'ja':
+    if args.lang == 'ja':
         corpus = JaConvCorpus(file_path=None)
         corpus.load(load_dir=data_path)
     else:
@@ -83,6 +83,10 @@ def interpreter(data_path, model_path):
     model = Seq2Seq(len(corpus.dic.token2id), feature_num=args.feature_num,
                     hidden_num=args.hidden_num, batch_size=1, gpu_flg=args.gpu)
     serializers.load_hdf5(model_path, model)
+
+    # load word2vec model
+    sim_th = 50
+    w2v_model = gensim.models.KeyedVectors.load_word2vec_format(W2V_MODEL_PATH, binary=False)
 
     # run conversation system
     print('The system is ready to run, please talk to me!')
@@ -104,7 +108,22 @@ def interpreter(data_path, model_path):
         #print(input_vocab)
         
         # convert word into ID
-        input_sentence = [corpus.dic.token2id[word] for word in input_vocab if not corpus.dic.token2id.get(word) is None]
+        input_sentence = []
+        for word in input_vocab:
+            if corpus.dic.token2id.get(word) is not None:
+                input_sentence.append(corpus.dic.token2id.get(word))
+            else:
+                try:
+                    sim_words = w2v_model.most_similar(positive=[word], topn=sim_th)
+                    for index, candidate_tuple in enumerate(sim_words):
+                        if corpus.dic.token2id.get(candidate_tuple[0]) is not None:
+                            input_sentence.append(corpus.dic.token2id.get(candidate_tuple[0]))
+                            break
+                        if index == sim_th - 1:
+                            input_sentence.append(corpus.dic.token2id['<unk>'])
+                except KeyError:
+                    input_sentence.append(corpus.dic.token2id['<unk>'])
+        #print(input_sentence)
 
         # input a sentence into model
         model.initialize()
@@ -117,6 +136,8 @@ def interpreter(data_path, model_path):
             generated_tokens = [corpus.dic[i] for i in generated_indices]
 
             print("--> ", " ".join(generated_tokens))
+
+        print("-> ", sentence)
         print('')
 
 
