@@ -93,12 +93,12 @@ class Decoder(chainer.Chain):
         sum_value = Variable(xp.zeros((h.shape[0], 1), dtype=xp.float32))
         products = []
         for h_enc in hs_enc:
-            inner_product = F.exp(F.batch_matmul(h, h_enc, transa=True)).data[:, :, 0]
+            inner_product = F.exp(F.batch_matmul(h, h_enc, transa=True) * (1 / 10e+03)).data[:, :, 0]
             products.append(inner_product)
             sum_value += inner_product
         ct = Variable(xp.zeros((h.shape[0], h.shape[1]), dtype=xp.float32))
         for i, h_enc in enumerate(hs_enc):
-            alpha_i = products[i] / sum_value
+            alpha_i = (products[i]  * (1 / 10e+03)) / sum_value
             ct += alpha_i.data * h_enc.data
         return ct
 
@@ -170,13 +170,21 @@ class Seq2Seq(chainer.Chain):
 
     def one_encode(self, src_text, train):
         """
+        とりあえずはテスト時は Word Prediction の出力はしない
         :param src_text: input text embed id ex.) [ 1, 0 ,14 ,5 ]
         :param train : True or False
         :return: context vector (hidden vector)
         """
+        sum_h = 0
         for word in src_text:
             word = chainer.Variable(xp.array([word], dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(word, self.c_batch, self.h_batch, train=train)
+            sum_h += self.h_batch
+        self.h_batch = sum_h / len(src_text)
+
+        # if train:
+        #     predict_mat = self.wpe(self.h_enc)
+        #     return F.mean_squared_error(predict_mat, teacher_wp)
 
     def one_decode(self, predict_id, teacher_id, train):
         """

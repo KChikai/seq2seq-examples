@@ -17,7 +17,6 @@ import chainer
 from chainer import cuda, optimizers, serializers, Variable
 from s2s_wordpredictions.util import ConvCorpus, JaConvCorpus
 from s2s_wordpredictions.seq2seq import Seq2Seq
-from wer import wer
 
 
 # parse command line args
@@ -27,7 +26,7 @@ parser.add_argument('--gpu', '-g', default='-1', type=int, help='GPU ID (negativ
 parser.add_argument('--epoch', '-e', default=100, type=int, help='number of epochs to learn')
 parser.add_argument('--feature_num', '-f', default=256, type=int, help='dimension of feature layer')
 parser.add_argument('--hidden_num', '-hi', default=512, type=int, help='dimension of hidden layer')
-parser.add_argument('--batchsize', '-b', default=10, type=int, help='learning minibatch size')
+parser.add_argument('--batchsize', '-b', default=200, type=int, help='learning minibatch size')
 parser.add_argument('--testsize', '-t', default=1000, type=int, help='number of text for testing a model')
 parser.add_argument('--lang', '-l', default='en', type=str, help='the choice of a language (Japanese "ja" or English "en" )')
 args = parser.parse_args()
@@ -48,7 +47,7 @@ testsize = args.testsize
 
 
 def create_wp_batch(vocab_size, wp_lists):
-    array = np.zeros((args.batchsize, vocab_size), dtype=xp.float32)
+    array = xp.zeros((args.batchsize, vocab_size), dtype=xp.float32)
     for row, li in enumerate(wp_lists):
         for wid in li:
             array[row, wid] = 1.0
@@ -187,6 +186,13 @@ def main():
             batch_num += 1
             print('Epoch: ', num, 'Batch_num', batch_num, 'batch loss: {:.2f}'.format(float(accum_loss.data)))
             accum_loss = 0
+
+        # save model and optimizer
+        if (epoch + 1) % 5 == 0:
+            print('-----', epoch + 1, ' times -----')
+            print('save the model and optimizer')
+            serializers.save_hdf5('data/' + str(epoch) + '.model', model)
+            serializers.save_hdf5('data/' + str(epoch) + '.state', optimizer)
 
     # save loss data
     with open('./data/loss_train_data.pkl', 'wb') as f:
