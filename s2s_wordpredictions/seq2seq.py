@@ -51,7 +51,7 @@ class WPe(chainer.Chain):
         s0 = F.sigmoid(self.ws(h_average))
         cp = self.caluculate_cp(s0, hs_enc)
         t = F.tanh(self.wt(F.concat((s0, cp))))
-        return self.wf(t)
+        return self.wf(t), s0
 
     def caluculate_cp(self, s0, hs_enc):
         sum_value = 0
@@ -135,17 +135,14 @@ class Seq2Seq(chainer.Chain):
         :param input_batch: batch of input text embed id ex.) [[ 1, 0 ,14 ,5 ], [ ...] , ...]
         :param train : True or False
         """
-        sum_h = 0
         for batch_word in input_batch:
             batch_word = chainer.Variable(xp.array(batch_word, dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(batch_word, self.c_batch, self.h_batch, train=train)
             self.h_enc.append(self.h_batch)
-            sum_h += self.h_batch
-        self.h_batch = sum_h / len(input_batch)
+        predict_mat, self.h_batch = self.wpe(self.h_enc)
 
         if train:
-            predict_mat = self.wpe(self.h_enc)
-            return F.mean_squared_error(predict_mat, teacher_wp)
+            return F.sigmoid_cross_entropy(predict_mat, teacher_wp)
 
     def decode(self, predict_id, teacher_id, train):
         """
@@ -175,12 +172,10 @@ class Seq2Seq(chainer.Chain):
         :param train : True or False
         :return: context vector (hidden vector)
         """
-        sum_h = 0
         for word in src_text:
             word = chainer.Variable(xp.array([word], dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(word, self.c_batch, self.h_batch, train=train)
-            sum_h += self.h_batch
-        self.h_batch = sum_h / len(src_text)
+        predict_mat, self.h_batch = self.wpe(self.h_enc)
 
         # if train:
         #     predict_mat = self.wpe(self.h_enc)

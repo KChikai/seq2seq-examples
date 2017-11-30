@@ -47,7 +47,7 @@ testsize = args.testsize
 
 
 def create_wp_batch(vocab_size, wp_lists):
-    array = xp.zeros((args.batchsize, vocab_size), dtype=xp.float32)
+    array = xp.zeros((args.batchsize, vocab_size), dtype=xp.int32)
     for row, li in enumerate(wp_lists):
         for wid in li:
             array[row, wid] = 1.0
