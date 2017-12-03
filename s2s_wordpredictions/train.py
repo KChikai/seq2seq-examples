@@ -187,6 +187,8 @@ def main():
             print('Epoch: ', num, 'Batch_num', batch_num, 'batch loss: {:.2f}'.format(float(accum_loss.data)))
             accum_loss = 0
 
+        train_loss_data.append(float(total_loss / batch_num))
+
         # save model and optimizer
         if (epoch + 1) % 5 == 0:
             print('-----', epoch + 1, ' times -----')

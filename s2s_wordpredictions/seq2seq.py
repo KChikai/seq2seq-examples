@@ -175,6 +175,7 @@ class Seq2Seq(chainer.Chain):
         for word in src_text:
             word = chainer.Variable(xp.array([word], dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(word, self.c_batch, self.h_batch, train=train)
+            self.h_enc.append(self.h_batch)
         predict_mat, self.h_batch = self.wpe(self.h_enc)
 
         # if train:
