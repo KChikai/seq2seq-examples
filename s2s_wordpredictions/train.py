@@ -64,13 +64,13 @@ def main():
         if args.lang == 'ja':
             corpus = JaConvCorpus(file_path=None, batch_size=batchsize, size_filter=True)
         else:
-            corpus = ConvCorpus(file_path=None, batch_size=batchsize)
+            corpus = ConvCorpus(file_path=None, batch_size=batchsize, size_filter=True)
         corpus.load(load_dir='./data/corpus/')
     else:
         if args.lang == 'ja':
             corpus = JaConvCorpus(file_path=data_file, batch_size=batchsize, size_filter=True)
         else:
-            corpus = ConvCorpus(file_path=data_file, batch_size=batchsize)
+            corpus = ConvCorpus(file_path=data_file, batch_size=batchsize, size_filter=True)
         corpus.save(save_dir='./data/corpus/')
     print('Vocabulary Size (number of words) :', len(corpus.dic.token2id))
 
@@ -111,7 +111,7 @@ def main():
         # create word prediction matrix
         wp = []
         for wid in output_text:
-            if wid in wp:
+            if wid not in wp:
                 wp.append(wid)
         output_wp_mat.append(wp)
 
