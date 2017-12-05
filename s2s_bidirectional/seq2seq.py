@@ -39,14 +39,14 @@ class Encoder(chainer.Chain):
     def __call__(self, x, c_pre, h_pre, x_rev, c_pre_rev, h_pre_rev, train=True):
         # forward lstm
         e = F.tanh(self.xe(x))
-        c_tmp, h_tmp = F.lstm(c_pre, self.eh(e) + self.hh(h_pre))
+        c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(e), ratio=0.2, train=train) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(x.data != -1).data.reshape(len(x), 1))   # calculate flg whether x is -1 or not
         c_next = F.where(enable, c_tmp, c_pre)                                              # if x!=-1, c_tmp . elseif x=-1, c_pre.
         h_next = F.where(enable, h_tmp, h_pre)                                              # if x!=-1, h_tmp . elseif x=-1, h_pre.
 
         # backward lstm
         e_rev = F.tanh(self.xe(x_rev))
-        c_tmp_rev, h_tmp_rev = F.lstm(c_pre_rev, self.eh_rev(e_rev) + self.hh_rev(h_pre_rev))
+        c_tmp_rev, h_tmp_rev = F.lstm(c_pre_rev, F.dropout(self.eh_rev(e_rev), ratio=0.2, train=train) + self.hh_rev(h_pre_rev))
         enable_rev = chainer.Variable(chainer.Variable(x_rev.data != -1).data.reshape(len(x), 1))   # calculate flg whether x is -1 or not
         c_next_rev = F.where(enable_rev, c_tmp_rev, c_pre_rev)                                      # if x!=-1, c_tmp . elseif x=-1, c_pre.
         h_next_rev = F.where(enable_rev, h_tmp_rev, h_pre_rev)                                      # if x!=-1, h_tmp . elseif x=-1, h_pre.
@@ -65,9 +65,9 @@ class Decoder(chainer.Chain):
             fy=L.Linear(hidden_size, vocab_size),
         )
 
-    def __call__(self, y, c_pre, h_pre, hs_enc):
+    def __call__(self, y, c_pre, h_pre, hs_enc, train=True):
         e = F.tanh(self.ye(y))
-        c_tmp, h_tmp = F.lstm(c_pre, self.eh(e) + self.hh(h_pre))
+        c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(e), ratio=0.2, train=train) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(y.data != -1).data.reshape(len(y), 1))
         c_next = F.where(enable, c_tmp, c_pre)
         h_next = F.where(enable, h_tmp, h_pre)
@@ -197,7 +197,7 @@ class Seq2Seq(chainer.Chain):
         :return: decoded embed vector
         """
         word = chainer.Variable(xp.array([predict_id], dtype=xp.int32))
-        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, self.h_enc)
+        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, self.h_enc, train=train)
         if train:
             t = xp.array([teacher_id], dtype=xp.int32)
             t = chainer.Variable(t)
