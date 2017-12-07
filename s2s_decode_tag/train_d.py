@@ -217,7 +217,7 @@ def main():
             for w_ids, l_ids in zip(output_batch, label_batch):
                 loss, predict_mat = model.decode(next_ids, w_ids, l_ids, train=True)
                 next_ids = xp.argmax(predict_mat.data, axis=1)
-                test_loss += loss
+                test_loss += loss.data
                 if args.gpu >= 0:
                     hypotheses.append(cuda.to_cpu(next_ids))
                 else:
@@ -253,9 +253,9 @@ def main():
         # display the on-going status
         print('Epoch: ', num,
               'Train loss: {:.2f}'.format(total_loss),
-              'Test loss: {:.2f}'.format(float(test_loss.data)))
+              'Test loss: {:.2f}'.format(float(test_loss)))
         train_loss_data.append(float(total_loss / batch_num))
-        test_loss_data.append(float(test_loss.data))
+        test_loss_data.append(float(test_loss))
 
         # evaluate a test loss
         check_loss = test_loss_data[-10:]           # check out the last 10 loss data
