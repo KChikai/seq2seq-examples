@@ -79,14 +79,15 @@ def main():
 
     print('Emotion size: ', len(corpus.emotion_set))
     ma = 0
-    mi = 99999
+    mi = 999999
     for word in corpus.emotion_set:
         wid = corpus.dic.token2id[word]
         if wid > ma:
             ma = wid
         if wid < mi:
             mi = wid
-    print(corpus.dic.token2id['<unk>'], mi, ma)
+    # print(corpus.dic.token2id['<start>'], corpus.dic.token2id['<eos>'], corpus.dic.token2id['happy'], mi, ma)
+    word_threshold = mi
 
     ######################
     #### create model ####
@@ -170,12 +171,18 @@ def main():
             # Decode from encoded context
             end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
             first_words = output_batch[0]
-            correct_at = chainer.Variable(xp.array([[0] for i in range(first_words)], dtype=xp.float32))
+            correct_at = chainer.Variable(xp.array([[0] for i in range(batchsize)], dtype=xp.float32))
             loss, predict_mat = model.decode(end_batch, first_words, correct_at, train=True)
             next_ids = first_words
             accum_loss += loss
             for w_ids in output_batch[1:]:
-                loss, predict_mat = model.decode(next_ids, w_ids, train=True)
+                correct_at = chainer.Variable(xp.array([[0] if i < word_threshold else [1] for i in w_ids], dtype=xp.float32))
+                # for index, f in enumerate(correct_at.data):
+                #     if f != 0:
+                #         print(correct_at.data)
+                #         print(corpus.dic[w_ids[index]])
+                #         break
+                loss, predict_mat = model.decode(next_ids, w_ids, correct_at, train=True)
                 next_ids = w_ids
                 accum_loss += loss
 
