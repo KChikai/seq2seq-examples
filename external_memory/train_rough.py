@@ -13,7 +13,7 @@ import numpy as np
 import chainer
 from chainer import cuda, optimizers, serializers
 from external_memory.tuning_util import JaConvCorpus, ConvCorpus
-from external_memory.simple_seq2seq import Seq2Seq
+from external_memory.external_seq2seq import Seq2Seq
 from setting_param import EPOCH, FEATURE_NUM, HIDDEN_NUM, LABEL_NUM, LABEL_EMBED, BATCH_NUM
 
 
@@ -112,9 +112,9 @@ def main():
     for input_text, output_text in zip(corpus.posts, corpus.cmnts):
 
         # convert to list
-        input_text.reverse()
-        # input_text.insert(0, corpus.dic.token2id["<eos>"])
-        output_text.append(corpus.dic.token2id["<eos>"])
+        input_text.reverse()                                        # 入力を反転させるかどうか
+        # input_text.insert(0, corpus.dic.token2id["<eos>"])        # 入力の最初にeosを挿入
+        output_text.append(corpus.dic.token2id["<eos>"])            # 出力の最後にeosを挿入
 
         # update max sentence length
         max_input_ren = max(max_input_ren, len(input_text))
@@ -136,6 +136,15 @@ def main():
     # create batch matrix
     input_mat = np.array(input_mat, dtype=np.int32).T
     output_mat = np.array(output_mat, dtype=np.int32).T
+
+    # create correct_at matrix
+    correct_at_mat = np.array(output_mat, dtype=np.float32)
+    for r_index, row in enumerate(correct_at_mat):
+        for c_index, w_id in enumerate(row):
+            if w_id < word_threshold:
+                correct_at_mat[r_index, c_index] = 0.0
+            else:
+                correct_at_mat[r_index, c_index] = 1.0
 
     with open('./data/corpus/input_mat.pkl', 'wb') as f:
         pickle.dump(input_mat, f)
@@ -163,6 +172,7 @@ def main():
             # select batch data
             input_batch = remove_extra_padding(train_input_mat[:, perm[i:i + batchsize]])
             output_batch = remove_extra_padding(train_output_mat[:, perm[i:i + batchsize]])
+            correct_at_batch = correct_at_mat[:, perm[i:i + batchsize]]
 
             # Encode a sentence
             model.initialize()                     # initialize cell
@@ -171,18 +181,20 @@ def main():
             # Decode from encoded context
             end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
             first_words = output_batch[0]
-            correct_at = chainer.Variable(xp.array([[0] for i in range(batchsize)], dtype=xp.float32))
-            loss, predict_mat = model.decode(end_batch, first_words, correct_at, train=True)
+            #correct_at = chainer.Variable(xp.array(correct_at_batch[0], dtype=xp.float32).reshape(batchsize, 1))
+            # correct_at = chainer.Variable(xp.array([[0] for i in range(batchsize)], dtype=xp.float32))
+            loss, predict_mat = model.decode(end_batch, first_words, word_threshold, train=True)
             next_ids = first_words
             accum_loss += loss
-            for w_ids in output_batch[1:]:
-                correct_at = chainer.Variable(xp.array([[0] if i < word_threshold else [1] for i in w_ids], dtype=xp.float32))
+            for r_ind, w_ids in enumerate(output_batch[1:]):
+                #correct_at = chainer.Variable(xp.array(correct_at_batch[r_ind+1], dtype=xp.float32).reshape(batchsize, 1))
+                # correct_at = chainer.Variable(xp.array([[0] if i < word_threshold else [1] for i in w_ids], dtype=xp.float32))
                 # for index, f in enumerate(correct_at.data):
                 #     if f != 0:
                 #         print(correct_at.data)
                 #         print(corpus.dic[w_ids[index]])
                 #         break
-                loss, predict_mat = model.decode(next_ids, w_ids, correct_at, train=True)
+                loss, predict_mat = model.decode(next_ids, w_ids, word_threshold, train=True)
                 next_ids = w_ids
                 accum_loss += loss
 

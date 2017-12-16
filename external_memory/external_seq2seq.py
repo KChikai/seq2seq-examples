@@ -41,8 +41,8 @@ class Decoder(chainer.Chain):
             eh=L.Linear(embed_size, 4 * hidden_size),
             hh=L.Linear(hidden_size, 4 * hidden_size),
             vt=L.Linear(hidden_size, 1),                         # softmaxに重み付けを行ったバージョン
-            we=L.Linear(hidden_size, emotion_vocab_size),
             wg=L.Linear(hidden_size, all_vocab_size - emotion_vocab_size),
+            we=L.Linear(hidden_size, emotion_vocab_size),
         )
 
     def __call__(self, y, c_pre, h_pre, train=True):
@@ -91,11 +91,11 @@ class Seq2Seq(chainer.Chain):
             batch_word = chainer.Variable(xp.array(batch_word, dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(batch_word, self.c_batch, self.h_batch, train=train)
 
-    def decode(self, input_id, teacher_id, correct_at, train):
+    def decode(self, input_id, teacher_id, word_th, train=True):
         """
         :param input_id: batch of word ID by output of decoder
         :param teacher_id : batch of correct ID
-        :param correct_at : batch of correct at label
+        :param word_th : batch of correct at label
         :param train: True or false
         :return: decoded embed vector
         """
@@ -104,7 +104,18 @@ class Seq2Seq(chainer.Chain):
         if train:
             t = xp.array(teacher_id, dtype=xp.int32)
             t = chainer.Variable(t)
-            at_loss = -sum(F.log(predict_at) * correct_at)[0]
+
+            predict_ids = xp.argmax(predict_mat.data, axis=1)
+            correct_at = xp.zeros((1, predict_ids.shape[0]), dtype=xp.float32)
+            for ind in range(predict_ids.shape[0]):
+                if predict_ids[ind] < word_th and teacher_id[ind] < word_th:
+                    correct_at[0, ind] = 0.0
+                elif predict_ids[ind] > word_th and teacher_id[ind] > word_th:
+                    correct_at[0, ind] = 0.0
+                else:
+                    correct_at[0, ind] = 1.0
+            correct_at = chainer.Variable(correct_at.reshape(predict_ids.shape[0], 1))
+            at_loss = -F.sum(F.log(predict_at) * correct_at)
             # if at_loss.data > 0:
             #     print(at_loss.data)
             return F.softmax_cross_entropy(predict_mat, t) + at_loss, predict_mat
@@ -125,7 +136,7 @@ class Seq2Seq(chainer.Chain):
             word = chainer.Variable(xp.array([word], dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(word, self.c_batch, self.h_batch, train=train)
 
-    def one_decode(self, input_id, teacher_id, correct_at, train):
+    def one_decode(self, input_id, teacher_id, correct_at, train=False):
         """
         :param input_id:
         :param teacher_id : embed id ( teacher's )
@@ -136,10 +147,8 @@ class Seq2Seq(chainer.Chain):
         word = chainer.Variable(xp.array([input_id], dtype=xp.int32))
         predict_vec, predict_at, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, train=train)
         if train:
-            t = xp.array([teacher_id], dtype=xp.int32)
-            t = chainer.Variable(t)
-            at_loss = -sum(F.log(predict_at) * correct_at)[0]
-            return F.softmax_cross_entropy(predict_vec, t) + at_loss, predict_vec
+            # TODO
+            pass
         else:
             return predict_vec
 
@@ -157,7 +166,7 @@ class Seq2Seq(chainer.Chain):
         sentence = ""
         word_id = word2id["<start>"]
         for _ in range(sentence_limit):
-            predict_vec = self.one_decode(input_id=word_id, teacher_id=None, train=False)
+            predict_vec = self.one_decode(input_id=word_id, teacher_id=None, correct_at=None, train=False)
             word = id2word[xp.argmax(predict_vec.data)]     # choose word_ID which has the highest probability
             word_id = word2id[word]
             if word == "<eos>":
@@ -175,7 +184,7 @@ class Seq2Seq(chainer.Chain):
         for index, (w_id, state) in enumerate(zip(Y_tm1, state_tm1)):
             self.c_batch = state[0]
             self.h_batch = state[1]
-            predict_vec = self.one_decode(input_id=w_id, teacher_id=None, train=False)
+            predict_vec = self.one_decode(input_id=w_id, teacher_id=None, correct_at=None, train=False)
             state_t.append((self.c_batch, self.h_batch))
             if index == 0:
                 p_t = predict_vec.data
