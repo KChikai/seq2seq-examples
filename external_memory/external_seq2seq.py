@@ -57,6 +57,7 @@ class Decoder(chainer.Chain):
 
         # output using at
         at = F.sigmoid(self.vt(h_next))
+        print(at.data)
         pg_pre = self.wg(h_next)
         pg = pg_pre * F.broadcast_to((1 - at), shape=(pg_pre.data.shape[0], pg_pre.data.shape[1]))
         pe_pre = self.we(h_next)
@@ -128,7 +129,7 @@ class Seq2Seq(chainer.Chain):
                 else:
                     correct_at[0, ind] = 0.0
             correct_at = chainer.Variable(correct_at.reshape(predict_ids.shape[0], 1))
-            at_loss = -F.sum(F.log(predict_at) * correct_at)
+            at_loss = -F.sum(F.log(predict_at) * correct_at) / self.batch_size
             # if at_loss.data > 0:
             #     print(at_loss.data)
             return F.softmax_cross_entropy(predict_mat, t) + at_loss, predict_mat

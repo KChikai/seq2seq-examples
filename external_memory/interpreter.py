@@ -21,7 +21,7 @@ from setting_param import FEATURE_NUM, HIDDEN_NUM
 
 # path info
 DATA_DIR = './data/corpus/'
-MODEL_PATH = './data/59.model'
+MODEL_PATH = './data/79.model'
 TRAIN_LOSS_PATH = './data/loss_train_data.pkl'
 TEST_LOSS_PATH = './data/loss_test_data.pkl'
 BLEU_SCORE_PATH = './data/bleu_score_data.pkl'
