@@ -46,14 +46,25 @@ class Decoder(chainer.Chain):
         )
 
     def __call__(self, y, c_pre, h_pre, train=True):
+        # input word embedding
         e = F.tanh(self.ye(y))
+
+        # LSTM
         c_tmp, h_tmp = F.lstm(c_pre, self.eh(F.dropout(e, ratio=0.2, train=train)) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(y.data != -1).data.reshape(len(y), 1))
         c_next = F.where(enable, c_tmp, c_pre)
         h_next = F.where(enable, h_tmp, h_pre)
+
+        # output using at
         at = F.sigmoid(self.vt(h_next))
-        pg = chainer.Variable(self.wg(h_next).data * (1 - at).data)
-        pe = chainer.Variable(self.we(h_next).data * at.data)
+        pg_pre = self.wg(h_next)
+        pg = pg_pre * F.broadcast_to((1 - at), shape=(pg_pre.data.shape[0], pg_pre.data.shape[1]))
+        pe_pre = self.we(h_next)
+        pe = pe_pre * F.broadcast_to(at, shape=(pe_pre.data.shape[0], pe_pre.data.shape[1]))
+
+        # broadcast を使わない ver.
+        # pg = chainer.Variable(self.wg(h_next).data * (1 - at).data)
+        # pe = chainer.Variable(self.we(h_next).data * at.data)
         return F.concat((pg, pe)), at, c_next, h_next
 
 
@@ -108,12 +119,14 @@ class Seq2Seq(chainer.Chain):
             predict_ids = xp.argmax(predict_mat.data, axis=1)
             correct_at = xp.zeros((1, predict_ids.shape[0]), dtype=xp.float32)
             for ind in range(predict_ids.shape[0]):
+                # right answer
                 if predict_ids[ind] < word_th and teacher_id[ind] < word_th:
-                    correct_at[0, ind] = 0.0
-                elif predict_ids[ind] > word_th and teacher_id[ind] > word_th:
-                    correct_at[0, ind] = 0.0
-                else:
                     correct_at[0, ind] = 1.0
+                elif predict_ids[ind] > word_th and teacher_id[ind] > word_th:
+                    correct_at[0, ind] = 1.0
+                # wrong answer
+                else:
+                    correct_at[0, ind] = 0.0
             correct_at = chainer.Variable(correct_at.reshape(predict_ids.shape[0], 1))
             at_loss = -F.sum(F.log(predict_at) * correct_at)
             # if at_loss.data > 0:
@@ -126,7 +139,7 @@ class Seq2Seq(chainer.Chain):
         self.c_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
         self.h_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
 
-    def one_encode(self, src_text, train):
+    def one_encode(self, src_text, train=False):
         """
         :param src_text: input text embed id ex.) [ 1, 0 ,14 ,5 ]
         :param train : True or False

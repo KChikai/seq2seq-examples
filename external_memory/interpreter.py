@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 
 """
-rough data でのトレーニング確認用
+external memory 確認用
 """
 
 import os
@@ -21,7 +21,7 @@ from setting_param import FEATURE_NUM, HIDDEN_NUM
 
 # path info
 DATA_DIR = './data/corpus/'
-MODEL_PATH = './data/14.model'
+MODEL_PATH = './data/59.model'
 TRAIN_LOSS_PATH = './data/loss_train_data.pkl'
 TEST_LOSS_PATH = './data/loss_test_data.pkl'
 BLEU_SCORE_PATH = './data/bleu_score_data.pkl'
@@ -32,7 +32,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g', default='-1', type=int, help='GPU ID (negative value indicates CPU)')
 parser.add_argument('--feature_num', '-f', default=FEATURE_NUM, type=int, help='dimension of feature layer')
 parser.add_argument('--hidden_num', '-hi', default=HIDDEN_NUM, type=int, help='dimension of hidden layer')
-parser.add_argument('--bar', '-b', default='-1', type=int, help='whether to show the graph of loss values or not')
+parser.add_argument('--bar', '-b', default='0', type=int, help='whether to show the graph of loss values or not')
 args = parser.parse_args()
 
 # GPU settings
@@ -82,8 +82,6 @@ def interpreter(data_path, model_path):
                     feature_num=args.feature_num, hidden_num=args.hidden_num, batch_size=1, gpu_flg=args.gpu)
     serializers.load_hdf5(model_path, model)
 
-    print(model.dec.wg.W.data)
-    print(model.dec.we.W.data)
     # run conversation system
     print('The system is ready to run, please talk to me!')
     print('( If you want to end a talk, please type "exit". )')
@@ -102,7 +100,7 @@ def interpreter(data_path, model_path):
         input_sentence = [corpus.dic.token2id[word] for word in input_vocab if not corpus.dic.token2id.get(word) is None]
 
         model.initialize()          # initialize cell
-        sentence = model.generate(input_sentence,  sentence_limit=len(input_sentence) + 30,
+        sentence = model.generate(input_sentence,  sentence_limit=len(input_sentence) + 10,
                                   word2id=corpus.dic.token2id, id2word=corpus.dic)
         print("-> ", sentence)
         print('')
@@ -133,7 +131,7 @@ def test_run(data_path, model_path, n_show=50):
         input_sentence = input_sentence[::-1]
 
         model.initialize()  # initialize cell
-        sentence = model.generate(input_sentence, sentence_limit=len(input_sentence) + 30,
+        sentence = model.generate(input_sentence, sentence_limit=len(input_sentence) + 10,
                                   word2id=corpus.dic.token2id, id2word=corpus.dic)
         print("teacher : ", " ".join([corpus.dic[w_id] for w_id in id_sequence]))
         print("correct :", " ".join([corpus.dic[w_id] for w_id in corpus.cmnts[num]]))
