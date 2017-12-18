@@ -38,10 +38,15 @@ class ConvCorpus:
     Dictionary class for English
     """
     def __init__(self, file_path, batch_size=100, size_filter=False):
+        # conversation corpus
         self.posts = []
         self.cmnts = []
-        self.emotion_set = set()
         self.dic = None
+
+        # emotion sets
+        self.emotion_set = set()
+        self.neg_words = set()
+        self.pos_words = set()
 
         if file_path is not None:
             self._construct_dict(file_path, batch_size, size_filter)
@@ -82,21 +87,36 @@ class ConvCorpus:
         print('word num after filtering: ', len(self.dic))
 
         # rearrangement ID
-        self._arrange_dic()
+        self.dic = self._arrange_dic()
 
         # make ID corpus
         self.posts = [[self.dic.token2id.get(word, self.dic.token2id['<unk>']) for word in post] for post in posts]
         self.cmnts = [[self.dic.token2id.get(word, self.dic.token2id['<unk>']) for word in cmnt] for cmnt in cmnts]
 
     def _arrange_dic(self):
+        """
+        辞書IDを再配置したもの．作り直した辞書を返す．
+        IDの並びは
+            -1: padding index
+            0~: general word, <start>, <eos>, <unk>, selected words
+        の順番に並べている．
+        :return:
+        """
+
         # load sentiment lexicon
         sentiment_lexicon = set()
-        for word in open('./data/positive-words.txt', 'r', encoding='utf-8'):
-            word = word.replace('\n', '')
-            sentiment_lexicon.add(word)
+        neg_lexicon = set()
+        pos_lexicon = set()
         for word in open('./data/negative-words.txt', 'r', encoding='utf-8'):
             word = word.replace('\n', '')
             sentiment_lexicon.add(word)
+            neg_lexicon.add(word)
+        for word in open('./data/positive-words.txt', 'r', encoding='utf-8'):
+            word = word.replace('\n', '')
+            sentiment_lexicon.add(word)
+            pos_lexicon.add(word)
+        self.neg_words = neg_lexicon
+        self.pos_words = pos_lexicon
 
         # choice sentiment lexicon
         contain_lexicon = set()
@@ -108,10 +128,10 @@ class ConvCorpus:
 
         # remake dic
         rsv_dic = corpora.Dictionary([], prune_at=None)
-        rsv_dic.token2id['<pad>'] = -1
+        rsv_dic.token2id['<pad>'] = -1                              # add padding id
         for w_id in self.dic:
             if self.dic[w_id] not in contain_lexicon:
-                rsv_dic.token2id[self.dic[w_id]] = len(rsv_dic)
+                rsv_dic.token2id[self.dic[w_id]] = len(rsv_dic)     # add general id
         print(len(rsv_dic))
 
         # add rest symbol
@@ -126,8 +146,7 @@ class ConvCorpus:
         for word in contain_lexicon:
             rsv_dic.token2id[word] = len(rsv_dic)
 
-        # change a dictionary
-        self.dic = rsv_dic
+        return rsv_dic
 
     def save(self, save_dir):
         self.dic.save(save_dir + 'dictionary.dict')
@@ -137,6 +156,10 @@ class ConvCorpus:
             pickle.dump(self.cmnts, f)
         with open(save_dir + 'emotion.set', 'wb') as f:
             pickle.dump(self.emotion_set, f)
+        with open(save_dir + 'neg.set', 'wb') as f:
+            pickle.dump(self.neg_words, f)
+        with open(save_dir + 'pos.set', 'wb') as f:
+            pickle.dump(self.pos_words, f)
 
     def load(self, load_dir):
         self.dic = corpora.Dictionary.load(load_dir + 'dictionary.dict')
@@ -146,6 +169,10 @@ class ConvCorpus:
             self.cmnts = pickle.load(f)
         with open(load_dir + 'emotion.set', 'rb') as f:
             self.emotion_set = pickle.load(f)
+        with open(load_dir + 'neg.set', 'rb') as f:
+            self.neg_words = pickle.load(f)
+        with open(load_dir + 'pos.set', 'rb') as f:
+            self.pos_words = pickle.load(f)
 
         print(len(self.posts), 'of pairs has been collected!')
 

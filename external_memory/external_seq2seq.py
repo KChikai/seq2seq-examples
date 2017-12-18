@@ -16,14 +16,12 @@ xp = np
 
 
 class Encoder(chainer.Chain):
-    def __init__(self, all_vocab_size, embed_size, hidden_size, batch_size):
+    def __init__(self, all_vocab_size, embed_size, hidden_size):
         super(Encoder, self).__init__(
             xe=L.EmbedID(all_vocab_size, embed_size, ignore_label=-1),
             eh=L.Linear(embed_size, 4 * hidden_size),
             hh=L.Linear(hidden_size, 4 * hidden_size),
         )
-        self.hidden_size = hidden_size
-        self.batch_size = batch_size
 
     def __call__(self, x, c_pre, h_pre, train=True):
         e = F.tanh(self.xe(x))
@@ -35,29 +33,31 @@ class Encoder(chainer.Chain):
 
 
 class Decoder(chainer.Chain):
-    def __init__(self, all_vocab_size, emotion_vocab_size, embed_size, hidden_size):
+    def __init__(self, all_vocab_size, emotion_vocab_size, embed_size, hidden_size, label_size, label_embed_size):
         super(Decoder, self).__init__(
             ye=L.EmbedID(all_vocab_size, embed_size, ignore_label=-1),
-            eh=L.Linear(embed_size, 4 * hidden_size),
+            le=L.EmbedID(label_size, label_embed_size, ignore_label=-1),
+            eh=L.Linear(embed_size + label_embed_size, 4 * hidden_size),
             hh=L.Linear(hidden_size, 4 * hidden_size),
-            vt=L.Linear(hidden_size, 1),                         # softmaxに重み付けを行ったバージョン
+            vt=L.Linear(hidden_size, 1),                                    # softmaxに重み付けを行ったバージョン
             wg=L.Linear(hidden_size, all_vocab_size - emotion_vocab_size),
             we=L.Linear(hidden_size, emotion_vocab_size),
         )
 
-    def __call__(self, y, c_pre, h_pre, train=True):
+    def __call__(self, y, y_label, c_pre, h_pre, train=True):
         # input word embedding
         e = F.tanh(self.ye(y))
+        e_l = F.tanh(self.le(y_label))
 
         # LSTM
-        c_tmp, h_tmp = F.lstm(c_pre, self.eh(F.dropout(e, ratio=0.2, train=train)) + self.hh(h_pre))
+        c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(F.concat((e, e_l))), ratio=0.2, train=train) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(y.data != -1).data.reshape(len(y), 1))
         c_next = F.where(enable, c_tmp, c_pre)
         h_next = F.where(enable, h_tmp, h_pre)
 
         # output using at
         at = F.sigmoid(self.vt(h_next))
-        print(at.data)
+        #print(at.data)
         pg_pre = self.wg(h_next)
         pg = pg_pre * F.broadcast_to((1 - at), shape=(pg_pre.data.shape[0], pg_pre.data.shape[1]))
         pe_pre = self.we(h_next)
@@ -71,7 +71,8 @@ class Decoder(chainer.Chain):
 
 class Seq2Seq(chainer.Chain):
 
-    def __init__(self, all_vocab_size, emotion_vocab_size, feature_num, hidden_num, batch_size, gpu_flg):
+    def __init__(self, all_vocab_size, emotion_vocab_size, feature_num, hidden_num,
+                 label_num, label_embed_num, batch_size, gpu_flg):
         """
         :param all_vocab_size: input vocab size
         :param emotion_vocab_size: input emotion vocab size
@@ -89,8 +90,9 @@ class Seq2Seq(chainer.Chain):
         self.h_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))  # hidden Variable
 
         super(Seq2Seq, self).__init__(
-            enc=Encoder(all_vocab_size, feature_num, hidden_num, batch_size),               # encoder
-            dec=Decoder(all_vocab_size, emotion_vocab_size, feature_num, hidden_num)        # decoder
+            enc=Encoder(all_vocab_size, feature_num, hidden_num),                           # encoder
+            dec=Decoder(all_vocab_size, emotion_vocab_size, feature_num,
+                        hidden_num, label_num, label_embed_num)                             # decoder
         )
 
     def encode(self, input_batch, train):
@@ -103,16 +105,19 @@ class Seq2Seq(chainer.Chain):
             batch_word = chainer.Variable(xp.array(batch_word, dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(batch_word, self.c_batch, self.h_batch, train=train)
 
-    def decode(self, input_id, teacher_id, word_th, train=True):
+    def decode(self, input_id, teacher_id, label_id, word_th, train=True):
         """
         :param input_id: batch of word ID by output of decoder
         :param teacher_id : batch of correct ID
+        :param label_id :
         :param word_th : batch of correct at label
         :param train: True or false
         :return: decoded embed vector
         """
         batch_word = chainer.Variable(xp.array(input_id, dtype=xp.int32))
-        predict_mat, predict_at, self.c_batch, self.h_batch = self.dec(batch_word, self.c_batch, self.h_batch, train=train)
+        batch_label = chainer.Variable(xp.array(label_id, dtype=xp.int32))
+        predict_mat, predict_at, self.c_batch, self.h_batch = self.dec(batch_word, batch_label,
+                                                                       self.c_batch, self.h_batch, train=train)
         if train:
             t = xp.array(teacher_id, dtype=xp.int32)
             t = chainer.Variable(t)
@@ -150,28 +155,31 @@ class Seq2Seq(chainer.Chain):
             word = chainer.Variable(xp.array([word], dtype=xp.int32))
             self.c_batch, self.h_batch = self.enc(word, self.c_batch, self.h_batch, train=train)
 
-    def one_decode(self, input_id, teacher_id, correct_at, train=False):
+    def one_decode(self, input_id, teacher_id, label_id, correct_at, train=False):
         """
         :param input_id:
         :param teacher_id : embed id ( teacher's )
+        :param label_id:
         :param correct_at:
         :param train: True or false
         :return: decoded embed vector
         """
         word = chainer.Variable(xp.array([input_id], dtype=xp.int32))
-        predict_vec, predict_at, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, train=train)
+        label = chainer.Variable(xp.array([label_id], dtype=xp.int32))
+        predict_vec, predict_at, self.c_batch, self.h_batch = self.dec(word, label, self.c_batch, self.h_batch, train=train)
         if train:
-            # TODO
+            # TODO: とりあえず今はバッチ処理でのみ学習
             pass
         else:
             return predict_vec
 
-    def generate(self, src_text, sentence_limit, word2id, id2word):
+    def generate(self, src_text, sentence_limit, word2id, id2word, label_id):
         """
         :param src_text: input text embed id ex.) [ 1, 0 ,14 ,5 ]
         :param sentence_limit:
         :param word2id:
         :param id2word:
+        :param label_id:
         :return:
         """
         self.initialize()
@@ -180,7 +188,8 @@ class Seq2Seq(chainer.Chain):
         sentence = ""
         word_id = word2id["<start>"]
         for _ in range(sentence_limit):
-            predict_vec = self.one_decode(input_id=word_id, teacher_id=None, correct_at=None, train=False)
+            predict_vec = self.one_decode(input_id=word_id, teacher_id=None,
+                                          label_id=label_id, correct_at=None, train=False)
             word = id2word[xp.argmax(predict_vec.data)]     # choose word_ID which has the highest probability
             word_id = word2id[word]
             if word == "<eos>":

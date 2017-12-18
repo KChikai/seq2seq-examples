@@ -42,18 +42,31 @@ n_epoch = args.epoch
 feature_num = args.feature_num
 hidden_num = args.hidden_num
 batchsize = args.batchsize
+label_num = args.label_num
+label_embed = args.label_embed
 
 
-def remove_extra_padding(batch_list):
+def remove_extra_padding(batch_list, reverse_flg=True):
     """
     remove extra padding
+    :param batch_list: a list of a batch
+    :param reverse_flg: whether a batch of sentences is reversed or not
     """
     remove_row = []
-    for i in range(len(batch_list))[::-1]:
-        if sum(batch_list[i]) == -1 * len(batch_list[i]):
-            remove_row.append(i)
-        else:
-            break
+    # reverse order (padding first)
+    if reverse_flg:
+        for i in range(len(batch_list)):
+            if sum(batch_list[i]) == -1 * len(batch_list[i]):
+                remove_row.append(i)
+            else:
+                break
+    # natural order (padding last)
+    else:
+        for i in range(len(batch_list))[::-1]:
+            if sum(batch_list[i]) == -1 * len(batch_list[i]):
+                remove_row.append(i)
+            else:
+                break
     return np.delete(batch_list, remove_row, axis=0)
 
 
@@ -94,7 +107,8 @@ def main():
     ######################
 
     model = Seq2Seq(all_vocab_size=len(corpus.dic.token2id), emotion_vocab_size=len(corpus.emotion_set),
-                    feature_num=feature_num, hidden_num=hidden_num, batch_size=batchsize, gpu_flg=args.gpu)
+                    feature_num=feature_num, hidden_num=hidden_num, batch_size=batchsize,
+                    label_num=label_num, label_embed_num=label_embed, gpu_flg=args.gpu)
     if args.gpu >= 0:
         model.to_gpu()
     optimizer = optimizers.Adam(alpha=0.001)
@@ -108,52 +122,79 @@ def main():
 
     input_mat = []
     output_mat = []
+    label_mat = []
+    #label_index = [index for index in range(label_num)]
     max_input_ren = max_output_ren = 0
     for input_text, output_text in zip(corpus.posts, corpus.cmnts):
 
-        # convert to list
-        input_text.reverse()                                        # 入力を反転させるかどうか
-        # input_text.insert(0, corpus.dic.token2id["<eos>"])        # 入力の最初にeosを挿入
+        # reverse an input and add eos tag
+        input_text.reverse()                                        # 入力を反転させる
         output_text.append(corpus.dic.token2id["<eos>"])            # 出力の最後にeosを挿入
 
         # update max sentence length
         max_input_ren = max(max_input_ren, len(input_text))
         max_output_ren = max(max_output_ren, len(output_text))
 
+        # make label lists TODO: 3値分類
+        n_num = p_num = 0
+        for word in output_text:
+            if corpus.dic[word] in corpus.neg_words:
+                n_num += 1
+            if corpus.dic[word] in corpus.pos_words:
+                p_num += 1
+        if (n_num + p_num) == 0:
+            label_mat.append([1 for _ in range(len(output_text))])
+        elif n_num <= p_num:
+            label_mat.append([2 for _ in range(len(output_text))])
+        elif n_num > p_num:
+            label_mat.append([0 for _ in range(len(output_text))])
+        else:
+            raise ValueError
+
+        # make a list of lists
         input_mat.append(input_text)
         output_mat.append(output_text)
 
-    # padding (文末にパディングを挿入する)
+    # padding (inputの文頭・outputの文末にパディングを挿入する)
     for li in input_mat:
         insert_num = max_input_ren - len(li)
         for _ in range(insert_num):
-            li.append(corpus.dic.token2id['<pad>'])
+            li.insert(0, corpus.dic.token2id['<pad>'])
     for li in output_mat:
         insert_num = max_output_ren - len(li)
         for _ in range(insert_num):
             li.append(corpus.dic.token2id['<pad>'])
+    for li in label_mat:
+        insert_num = max_output_ren - len(li)
+        for _ in range(insert_num):
+            li.append(corpus.dic.token2id['<pad>'])
+    if len(output_mat) != len(label_mat):
+        print('Output matrix and label matrix should have the same dimension.')
+        raise ValueError
 
     # create batch matrix
     input_mat = np.array(input_mat, dtype=np.int32).T
     output_mat = np.array(output_mat, dtype=np.int32).T
+    label_mat = np.array(label_mat, dtype=np.int32).T
 
     # create correct_at matrix
-    correct_at_mat = np.array(output_mat, dtype=np.float32)
-    for r_index, row in enumerate(correct_at_mat):
-        for c_index, w_id in enumerate(row):
-            if w_id < word_threshold:
-                correct_at_mat[r_index, c_index] = 0.0
-            else:
-                correct_at_mat[r_index, c_index] = 1.0
+    # correct_at_mat = np.array(output_mat, dtype=np.float32)
+    # for r_index, row in enumerate(correct_at_mat):
+    #     for c_index, w_id in enumerate(row):
+    #         if w_id < word_threshold:
+    #             correct_at_mat[r_index, c_index] = 0.0
+    #         else:
+    #             correct_at_mat[r_index, c_index] = 1.0
+    #
+    # with open('./data/corpus/input_mat.pkl', 'wb') as f:
+    #     pickle.dump(input_mat, f)
+    # with open('./data/corpus/output_mat.pkl', 'wb') as f:
+    #     pickle.dump(output_mat, f)
 
-    with open('./data/corpus/input_mat.pkl', 'wb') as f:
-        pickle.dump(input_mat, f)
-    with open('./data/corpus/output_mat.pkl', 'wb') as f:
-        pickle.dump(output_mat, f)
-
-    # separate corpus into Train and Test (今回はテストしない)
+    # separate corpus into Train and Test TODO:実験時はテストデータとトレーニングデータに分離する
     train_input_mat = input_mat
     train_output_mat = output_mat
+    train_label_mat = label_mat
 
     #############################
     #### train seq2seq model ####
@@ -170,32 +211,20 @@ def main():
         for i in range(0, len(corpus.posts), batchsize):
 
             # select batch data
-            input_batch = remove_extra_padding(train_input_mat[:, perm[i:i + batchsize]])
-            output_batch = remove_extra_padding(train_output_mat[:, perm[i:i + batchsize]])
-            correct_at_batch = correct_at_mat[:, perm[i:i + batchsize]]
+            input_batch = remove_extra_padding(train_input_mat[:, perm[i:i + batchsize]], reverse_flg=True)
+            output_batch = remove_extra_padding(train_output_mat[:, perm[i:i + batchsize]], reverse_flg=False)
+            label_batch = remove_extra_padding(train_label_mat[:, perm[i:i + batchsize]], reverse_flg=False)
+            # correct_at_batch = correct_at_mat[:, perm[i:i + batchsize]]
 
             # Encode a sentence
             model.initialize()                     # initialize cell
             model.encode(input_batch, train=True)  # encode (output: hidden Variable)
 
             # Decode from encoded context
-            end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
-            first_words = output_batch[0]
-            #correct_at = chainer.Variable(xp.array(correct_at_batch[0], dtype=xp.float32).reshape(batchsize, 1))
-            # correct_at = chainer.Variable(xp.array([[0] for i in range(batchsize)], dtype=xp.float32))
-            loss, predict_mat = model.decode(end_batch, first_words, word_threshold, train=True)
-            next_ids = first_words
-            accum_loss += loss
-            for r_ind, w_ids in enumerate(output_batch[1:]):
-                #correct_at = chainer.Variable(xp.array(correct_at_batch[r_ind+1], dtype=xp.float32).reshape(batchsize, 1))
-                # correct_at = chainer.Variable(xp.array([[0] if i < word_threshold else [1] for i in w_ids], dtype=xp.float32))
-                # for index, f in enumerate(correct_at.data):
-                #     if f != 0:
-                #         print(correct_at.data)
-                #         print(corpus.dic[w_ids[index]])
-                #         break
-                loss, predict_mat = model.decode(next_ids, w_ids, word_threshold, train=True)
-                next_ids = w_ids
+            input_ids = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
+            for w_ids, l_ids in zip(output_batch, label_batch):
+                loss, predict_mat = model.decode(input_ids, w_ids, label_id=l_ids, word_th=word_threshold, train=True)
+                input_ids = w_ids
                 accum_loss += loss
 
             # learn model
