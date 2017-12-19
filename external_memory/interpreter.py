@@ -2,6 +2,8 @@
 
 """
 external memory 確認用
+とりあえず英語での実装を考慮している
+ラベルをデコード部分に入れる（emotion embedding, speaker model）
 """
 
 import os
@@ -14,14 +16,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from nltk import word_tokenize
 from chainer import serializers, cuda
-from external_memory.tuning_util import JaConvCorpus, ConvCorpus
+from external_memory.tuning_util import ConvCorpus
 from external_memory.external_seq2seq import Seq2Seq
-from setting_param import FEATURE_NUM, HIDDEN_NUM
+from setting_param import FEATURE_NUM, HIDDEN_NUM, LABEL_NUM, LABEL_EMBED
 
 
 # path info
 DATA_DIR = './data/corpus/'
-MODEL_PATH = './data/199.model'
+MODEL_PATH = './data/149.model'
 TRAIN_LOSS_PATH = './data/loss_train_data.pkl'
 TEST_LOSS_PATH = './data/loss_test_data.pkl'
 BLEU_SCORE_PATH = './data/bleu_score_data.pkl'
@@ -32,6 +34,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g', default='-1', type=int, help='GPU ID (negative value indicates CPU)')
 parser.add_argument('--feature_num', '-f', default=FEATURE_NUM, type=int, help='dimension of feature layer')
 parser.add_argument('--hidden_num', '-hi', default=HIDDEN_NUM, type=int, help='dimension of hidden layer')
+parser.add_argument('--label_num', '-ln', default=LABEL_NUM, type=int, help='dimension of label layer')
+parser.add_argument('--label_embed', '-le', default=LABEL_EMBED, type=int, help='dimension of label embed layer')
 parser.add_argument('--bar', '-b', default='0', type=int, help='whether to show the graph of loss values or not')
 args = parser.parse_args()
 
@@ -79,8 +83,10 @@ def interpreter(data_path, model_path):
 
     # rebuild seq2seq model
     model = Seq2Seq(all_vocab_size=len(corpus.dic.token2id), emotion_vocab_size=len(corpus.emotion_set),
-                    feature_num=args.feature_num, hidden_num=args.hidden_num, batch_size=1, gpu_flg=args.gpu)
+                    feature_num=args.feature_num, hidden_num=args.hidden_num,
+                    label_num=args.label_num, label_embed_num=args.label_embed, batch_size=1, gpu_flg=args.gpu)
     serializers.load_hdf5(model_path, model)
+    label_index = [index for index in range(LABEL_NUM)]
 
     # run conversation system
     print('The system is ready to run, please talk to me!')
@@ -93,20 +99,35 @@ def interpreter(data_path, model_path):
             print('See you again!')
             break
 
-        input_vocab = [unicodedata.normalize('NFKC', word.lower()) for word in word_tokenize(sentence)]
+        # check a sentiment tag
+        input_vocab = sentence.split(' ')
+        label_id = input_vocab.pop(-1)
+        label_false_flg = 1
+        for index in label_index:
+            if label_id == str(index):
+                label_id = index               # TODO: ラベルのインデックスに注意する．今は3値分類 (0, 1, 2)
+                label_false_flg = 0
+                break
+        if label_false_flg:
+            print('caution: you donot set any enable tags!')
+            input_vocab = sentence.split(' ')
+            input_vocab.pop(-1)
+            label_id = -1
+
+        input_vocab = [unicodedata.normalize('NFKC', word.lower()) for word in word_tokenize(' '.join(input_vocab))]
         input_vocab = input_vocab[::-1]
 
         # convert word into ID
         input_sentence = [corpus.dic.token2id[word] for word in input_vocab if not corpus.dic.token2id.get(word) is None]
 
-        model.initialize()          # initialize cell
-        sentence = model.generate(input_sentence,  sentence_limit=len(input_sentence) + 10,
-                                  word2id=corpus.dic.token2id, id2word=corpus.dic)
+        model.initialize()
+        sentence = model.generate(input_sentence,  sentence_limit=len(input_sentence) + 20,
+                                  label_id=label_id, word2id=corpus.dic.token2id, id2word=corpus.dic)
         print("-> ", sentence)
         print('')
 
 
-def test_run(data_path, model_path, n_show=50):
+def test_run(data_path, model_path, n_show=80):
     """
     Test function.
     Input is training data.
@@ -122,7 +143,8 @@ def test_run(data_path, model_path, n_show=50):
 
     # rebuild seq2seq model
     model = Seq2Seq(all_vocab_size=len(corpus.dic.token2id), emotion_vocab_size=len(corpus.emotion_set),
-                    feature_num=args.feature_num, hidden_num=args.hidden_num, batch_size=1, gpu_flg=args.gpu)
+                    feature_num=args.feature_num, hidden_num=args.hidden_num,
+                    label_num=args.label_num, label_embed_num=args.label_embed, batch_size=1, gpu_flg=args.gpu)
     serializers.load_hdf5(model_path, model)
 
     # run an interpreter
@@ -130,11 +152,28 @@ def test_run(data_path, model_path, n_show=50):
         id_sequence = input_sentence.copy()
         input_sentence = input_sentence[::-1]
 
+        # make label lists TODO: 3値分類
+        n_num = p_num = 0
+        for word in corpus.cmnts[num]:
+            if corpus.dic[word] in corpus.neg_words:
+                n_num += 1
+            if corpus.dic[word] in corpus.pos_words:
+                p_num += 1
+        if (n_num + p_num) == 0:
+            label_id = 1
+        elif n_num <= p_num:
+            label_id = 2
+        elif n_num > p_num:
+            label_id = 0
+        else:
+            raise ValueError
+
+        # generate an output
         model.initialize()  # initialize cell
-        sentence = model.generate(input_sentence, sentence_limit=len(input_sentence) + 10,
-                                  word2id=corpus.dic.token2id, id2word=corpus.dic)
+        sentence = model.generate(input_sentence, sentence_limit=len(input_sentence) + 20,
+                                  label_id=label_id, word2id=corpus.dic.token2id, id2word=corpus.dic)
         print("teacher : ", " ".join([corpus.dic[w_id] for w_id in id_sequence]))
-        print("correct :", " ".join([corpus.dic[w_id] for w_id in corpus.cmnts[num]]))
+        print("correct :", " ".join([corpus.dic[w_id] for w_id in corpus.cmnts[num]]), label_id)
         print("-> ", sentence)
         print('')
 
