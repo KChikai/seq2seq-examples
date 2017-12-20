@@ -17,12 +17,12 @@ import matplotlib.pyplot as plt
 from nltk import word_tokenize
 from chainer import serializers, cuda
 from util import ConvCorpus, JaConvCorpus
-from s2s_bidirectional.seq2seq import Seq2Seq
+from seq2seq import Seq2Seq
 
 
 # path info
 DATA_DIR = './data/corpus/'
-MODEL_PATH = './data/19.model'
+MODEL_PATH = './data/14.model'
 TRAIN_LOSS_PATH = './data/loss_train_data.pkl'
 TEST_LOSS_PATH = './data/loss_test_data.pkl'
 BLEU_SCORE_PATH = './data/bleu_score_data.pkl'
@@ -102,7 +102,11 @@ def interpreter(data_path, model_path):
             print('See you again!')
             break
 
-        input_vocab = [unicodedata.normalize('NFKC', word.lower()) for word in word_tokenize(sentence)]
+        if args.lang == 'en':
+            input_vocab = [unicodedata.normalize('NFKC', word.lower()) for word in word_tokenize(sentence)]
+        elif args.lang == 'ja':
+            input_vocab = [unicodedata.normalize('NFKC', word.lower()) for word in parse_ja_text(sentence)]
+
         input_vocab_rev = input_vocab[::-1]
 
         # convert word into ID

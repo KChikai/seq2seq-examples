@@ -1,8 +1,5 @@
 # -*- coding:utf-8 -*-
 """
-双方向seq2seqモデル．
-アテンションがついていないモデル．
-
 Sample script of Sequence to Sequence model.
 You can also use Batch and GPU.
 This model is based on below paper.
@@ -25,7 +22,7 @@ xp = np
 
 
 class Encoder(chainer.Chain):
-    def __init__(self, vocab_size, embed_size, hidden_size):
+    def __init__(self, vocab_size, embed_size, hidden_size, batch_size):
         super(Encoder, self).__init__(
             # embed
             xe=L.EmbedID(vocab_size, embed_size, ignore_label=-1),
@@ -61,18 +58,34 @@ class Decoder(chainer.Chain):
             ye=L.EmbedID(vocab_size, embed_size, ignore_label=-1),
             eh=L.Linear(embed_size, 4 * hidden_size),
             hh=L.Linear(hidden_size, 4 * hidden_size),
-            hf=L.Linear(hidden_size, embed_size),
-            fy=L.Linear(embed_size, vocab_size),
+            wc=L.Linear(hidden_size, hidden_size),
+            wh=L.Linear(hidden_size, hidden_size),
+            fy=L.Linear(hidden_size, vocab_size),
         )
 
-    def __call__(self, y, c_pre, h_pre, train=True):
+    def __call__(self, y, c_pre, h_pre, hs_enc, train=True):
         e = F.tanh(self.ye(y))
         c_tmp, h_tmp = F.lstm(c_pre, F.dropout(self.eh(e), ratio=0.2, train=train) + self.hh(h_pre))
         enable = chainer.Variable(chainer.Variable(y.data != -1).data.reshape(len(y), 1))
         c_next = F.where(enable, c_tmp, c_pre)
         h_next = F.where(enable, h_tmp, h_pre)
-        f = F.tanh(self.hf(h_next))
+        ct = self.calculate_alpha(h_next, hs_enc)
+        f = F.tanh(self.wc(ct) + self.wh(h_next))
         return self.fy(f), c_next, h_next
+
+    @staticmethod
+    def calculate_alpha(h, hs_enc):
+        sum_value = 0
+        products = []
+        for h_enc in hs_enc:
+            inner_product = F.exp(F.batch_matmul(h, h_enc, transa=True) * (1 / 10e+03)).data[:, :, 0]
+            products.append(inner_product)
+            sum_value += inner_product
+        ct = 0
+        for i, h_enc in enumerate(hs_enc):
+            alpha_i = (products[i] * (1 / 10e+03)) / sum_value
+            ct += alpha_i * h_enc
+        return ct
 
 
 class Seq2Seq(chainer.Chain):
@@ -94,12 +107,12 @@ class Seq2Seq(chainer.Chain):
         self.h_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
         self.c_batch_rev = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
         self.h_batch_rev = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
-        self.h_enc = []                                                         # for calculating alpha
+        self.h_enc = []                                                             # for calculating alpha
 
         super(Seq2Seq, self).__init__(
-            enc=Encoder(vocab_size, feature_num, hidden_num),                   # encoder
-            ws=L.Linear(hidden_num * 2, hidden_num),                            # TODO: エンコーダの隠れ層をデコーダに渡す
-            dec=Decoder(vocab_size, feature_num, hidden_num)                    # decoder
+            enc=Encoder(vocab_size, feature_num, hidden_num, batch_size),           # encoder
+            ws=L.Linear(hidden_num * 2, hidden_num * 2),
+            dec=Decoder(vocab_size, feature_num, hidden_num * 2)                    # decoder
         )
 
     def encode(self, input_batch, input_batch_rev, train):
@@ -127,8 +140,7 @@ class Seq2Seq(chainer.Chain):
             h_average += h
         h_average /= len(self.h_enc)
         self.h_batch = F.sigmoid(self.ws(h_average))
-        # self.c_batch = F.concat((self.c_batch, self.c_batch_rev))
-        self.c_batch = self.c_batch                                 # TODO: とりあえずencoderの片方のcell batchを渡している
+        self.c_batch = F.concat((self.c_batch, self.c_batch_rev))
 
     def decode(self, predict_id, teacher_id, train):
         """
@@ -138,7 +150,7 @@ class Seq2Seq(chainer.Chain):
         :return: decoded embed vector
         """
         batch_word = chainer.Variable(xp.array(predict_id, dtype=xp.int32))
-        predict_mat, self.c_batch, self.h_batch = self.dec(batch_word, self.c_batch, self.h_batch, train=train)
+        predict_mat, self.c_batch, self.h_batch = self.dec(batch_word, self.c_batch, self.h_batch, self.h_enc)
         if train:
             t = xp.array(teacher_id, dtype=xp.int32)
             t = chainer.Variable(t)
@@ -146,11 +158,11 @@ class Seq2Seq(chainer.Chain):
         else:
             return predict_mat
 
-    def initialize(self, batch_size):
-        self.c_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
-        self.h_batch = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
-        self.c_batch_rev = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
-        self.h_batch_rev = Variable(xp.zeros((batch_size, self.hidden_num), dtype=xp.float32))
+    def initialize(self):
+        self.c_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
+        self.h_batch = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
+        self.c_batch_rev = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
+        self.h_batch_rev = Variable(xp.zeros((self.batch_size, self.hidden_num), dtype=xp.float32))
         self.h_enc.clear()
 
     def one_encode(self, src_text, src_text_rev, train):
@@ -183,7 +195,7 @@ class Seq2Seq(chainer.Chain):
         :return: decoded embed vector
         """
         word = chainer.Variable(xp.array([predict_id], dtype=xp.int32))
-        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, train=train)
+        predict_vec, self.c_batch, self.h_batch = self.dec(word, self.c_batch, self.h_batch, self.h_enc, train=train)
         if train:
             t = xp.array([teacher_id], dtype=xp.int32)
             t = chainer.Variable(t)
@@ -200,7 +212,7 @@ class Seq2Seq(chainer.Chain):
         :param id2word:
         :return:
         """
-        self.initialize(batch_size=1)
+        self.initialize()
         self.one_encode(src_text, src_text_rev, train=False)
 
         sentence = ""
@@ -213,4 +225,3 @@ class Seq2Seq(chainer.Chain):
                 break
             sentence = sentence + word + " "
         return sentence
-

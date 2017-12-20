@@ -11,12 +11,11 @@ os.environ["CHAINER_TYPE_CHECK"] = "0"
 
 import pickle
 import argparse
-import nltk
 import numpy as np
 import chainer
 from chainer import cuda, optimizers, serializers, Variable
-from s2s_bidirectional.util import ConvCorpus, JaConvCorpus
-from s2s_bidirectional.seq2seq import Seq2Seq
+from util import ConvCorpus, JaConvCorpus
+from seq2seq import Seq2Seq
 
 
 # parse command line args
@@ -46,16 +45,27 @@ batchsize = args.batchsize
 testsize = args.testsize
 
 
-def remove_extra_padding(batch_list):
+def remove_extra_padding(batch_list, reverse_flg=True):
     """
     remove extra padding
+    :param batch_list: a list of a batch
+    :param reverse_flg: whether a batch of sentences is reversed or not
     """
     remove_row = []
-    for i in range(len(batch_list))[::-1]:
-        if sum(batch_list[i]) == -1 * len(batch_list[i]):
-            remove_row.append(i)
-        else:
-            break
+    # reverse order (padding first)
+    if reverse_flg:
+        for i in range(len(batch_list)):
+            if sum(batch_list[i]) == -1 * len(batch_list[i]):
+                remove_row.append(i)
+            else:
+                break
+    # natural order (padding last)
+    else:
+        for i in range(len(batch_list))[::-1]:
+            if sum(batch_list[i]) == -1 * len(batch_list[i]):
+                remove_row.append(i)
+            else:
+                break
     return np.delete(batch_list, remove_row, axis=0)
 
 
@@ -143,7 +153,7 @@ def main():
     for li in input_mat_rev:
         insert_num = max_input_ren - len(li)
         for _ in range(insert_num):
-            li.append(corpus.dic.token2id['<pad>'])
+            li.insert(0, corpus.dic.token2id['<pad>'])
 
     # create batch matrix
     input_mat = np.array(input_mat, dtype=np.int32).T
@@ -178,9 +188,9 @@ def main():
         for i in range(0, len(corpus.posts) - testsize, batchsize):
 
             # select batch data
-            input_batch = remove_extra_padding(train_input_mat[:, perm[i:i + batchsize]])
-            input_batch_rev = remove_extra_padding(train_input_mat_rev[:, perm[i:i + batchsize]])
-            output_batch = remove_extra_padding(train_output_mat[:, perm[i:i + batchsize]])
+            input_batch = remove_extra_padding(train_input_mat[:, perm[i:i + batchsize]], reverse_flg=False)
+            input_batch_rev = remove_extra_padding(train_input_mat_rev[:, perm[i:i + batchsize]], reverse_flg=True)
+            output_batch = remove_extra_padding(train_output_mat[:, perm[i:i + batchsize]], reverse_flg=False)
             # output_wp_batch = []
             # for index in perm[i:i + batchsize]:
             #     output_wp_batch.append(train_output_wp_mat[index])
@@ -188,11 +198,11 @@ def main():
             #                                   wp_lists=output_wp_batch)
 
             # Encode a sentence
-            model.initialize()
+            model.initialize(batch_size=input_batch.shape[1])
             model.encode(input_batch, input_batch_rev, train=True)
 
             # Decode from encoded context
-            end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(batchsize)])
+            end_batch = xp.array([corpus.dic.token2id["<start>"] for _ in range(input_batch.shape[1])])
             first_words = output_batch[0]
             loss, predict_mat = model.decode(end_batch, first_words, train=True)
             next_ids = first_words
