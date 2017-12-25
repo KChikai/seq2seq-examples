@@ -111,6 +111,7 @@ class Seq2Seq(chainer.Chain):
         """
         # check the size of batch lists
         if len(input_batch) != len(input_batch_rev):
+            print('Input batch must be the same size to input batch reversed.')
             raise ValueError
 
         # encoding
@@ -173,7 +174,8 @@ class Seq2Seq(chainer.Chain):
             h_average += h
         h_average /= len(self.h_enc)
         self.h_batch = F.sigmoid(self.ws(h_average))
-        self.c_batch = F.concat((self.c_batch, self.c_batch_rev))
+        # self.c_batch = F.concat((self.c_batch, self.c_batch_rev))
+        self.c_batch = self.c_batch                                 # TODO: とりあえずencoderの片方のcell batchを渡している
 
     def one_decode(self, predict_id, teacher_id, train):
         """
