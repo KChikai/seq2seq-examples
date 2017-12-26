@@ -185,6 +185,7 @@ def main():
     # create batch matrix
     print('transpose...')
     input_mat = np.array(input_mat, dtype=np.int32).T
+    input_mat_rev = np.array(input_mat_rev, dtype=np.int32).T
     output_mat = np.array(output_mat, dtype=np.int32).T
     label_mat = np.array(label_mat, dtype=np.int32).T
 
@@ -239,11 +240,10 @@ def main():
         train_loss_data.append(float(total_loss / batch_num))
 
         # save model and optimizer
-        if (epoch + 1) % 5 == 0:
-            print('-----', epoch + 1, ' times -----')
-            print('save the model and optimizer')
-            serializers.save_hdf5('data/' + str(epoch) + '.model', model)
-            serializers.save_hdf5('data/' + str(epoch) + '.state', optimizer)
+        print('-----', epoch + 1, ' times -----')
+        print('save the model and optimizer')
+        serializers.save_hdf5('data/' + str(epoch) + '.model', model)
+        serializers.save_hdf5('data/' + str(epoch) + '.state', optimizer)
 
     # save loss data
     with open('./data/loss_train_data.pkl', 'wb') as f:
